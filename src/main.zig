@@ -33,7 +33,8 @@ pub fn main() !void {
 
     var buf: [ARG_MAX]u8 = undefined;
     while (true) {
-        std.debug.print("zkal> ", .{});
+        const cwd = std.posix.getcwd(&buf);
+        std.debug.print("{s}> ", .{cwd});
 
         const line = try readLine(&buf);
 
