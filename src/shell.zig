@@ -15,7 +15,9 @@ fn pipeCommand(group: *const parser.Group, command_idx: usize, fd: ?i32, allocat
         std.posix.close(old_fd);
     }
 
-    if (is_last_pipe) {} else {
+    if (is_last_pipe) {
+        // set redirections
+    } else {
         const pipe = try std.posix.pipe();
 
         const pid = try std.posix.fork();
@@ -38,6 +40,7 @@ fn pipeCommand(group: *const parser.Group, command_idx: usize, fd: ?i32, allocat
     for (cmd.argv.items, 0..) |arg, i| args[i] = (try allocator.dupeZ(u8, arg)).ptr;
 
     _ = std.posix.execvpeZ(path, args, envp) catch null;
+
     return ShellError.CommandNotFound;
 }
 
@@ -74,7 +77,10 @@ pub fn run(groups: []const parser.Group) !void {
         const pid = try std.posix.fork();
 
         if (pid == 0) {
-            pipeCommand(&group, start_idx, null, allocator) catch |err| printShellError(err);
+            pipeCommand(&group, start_idx, null, allocator) catch |err| {
+                printShellError(err);
+                //std.process.exit(1);
+            };
         }
 
         const result = std.posix.waitpid(pid, 0);

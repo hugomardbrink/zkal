@@ -33,7 +33,7 @@ pub fn main() !void {
 
     var buf: [ARG_MAX]u8 = undefined;
     while (true) {
-        const cwd = std.posix.getcwd(&buf);
+        const cwd = try std.posix.getcwd(&buf);
         std.debug.print("{s}> ", .{cwd});
 
         const line = try readLine(&buf);
