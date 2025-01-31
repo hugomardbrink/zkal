@@ -16,7 +16,21 @@ fn pipeCommand(group: *const parser.Group, command_idx: usize, fd: ?i32, allocat
     }
 
     if (is_last_pipe) {
-        // set redirections
+        if (group.rstdout) |rstdout| {
+            const stdout_fd = try std.posix.open(rstdout, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+            try std.posix.dup2(stdout_fd, std.posix.STDOUT_FILENO);
+            std.posix.close(stdout_fd);
+        }
+        if (group.rstderr) |rstderr| {
+            const stderr_fd = try std.posix.open(rstderr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+            try std.posix.dup2(stderr_fd, std.posix.STDOUT_FILENO);
+            std.posix.close(stderr_fd);
+        }
+        if (group.rstdin) |rstdin| {
+            const stdin_fd = try std.posix.open(rstdin, .{ .ACCMODE = .RDONLY }, 0o644);
+            try std.posix.dup2(stdin_fd, std.posix.STDIN_FILENO);
+            std.posix.close(stdin_fd);
+        }
     } else {
         const pipe = try std.posix.pipe();
 
@@ -79,7 +93,7 @@ pub fn run(groups: []const parser.Group) !void {
         if (pid == 0) {
             pipeCommand(&group, start_idx, null, allocator) catch |err| {
                 printShellError(err);
-                //std.process.exit(1);
+                std.process.exit(1);
             };
         }
 
