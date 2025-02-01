@@ -66,6 +66,15 @@ fn pipe(state: *ParserState, token_it: *std.mem.SplitIterator(u8, .scalar)) !voi
     return;
 }
 
+fn background(state: *ParserState, _: *std.mem.SplitIterator(u8, .scalar)) !void {
+    if (state.current_command.argv.items.len == 0) {
+        return ParserError.InvalidCommand;
+    }
+
+    state.current_group.is_background = true;
+    return;
+}
+
 fn output(state: *ParserState, token_it: *std.mem.SplitIterator(u8, .scalar)) !void {
     if (state.current_command.argv.items.len == 0) {
         return ParserError.InvalidCommand;
@@ -132,6 +141,7 @@ const TokenFn = *const fn (*ParserState, *std.mem.SplitIterator(u8, .scalar)) Pa
 
 const TokenToFunctionMap = std.StaticStringMap(TokenFn).initComptime(.{
     .{ "|", pipe },
+    .{ "&", background },
     .{ ">", output },
     .{ "<", input },
     .{ "2>", outputError },

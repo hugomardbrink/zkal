@@ -1,10 +1,19 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const parser = @import("parser.zig");
+
+const ARG_MAX = 4096;
 
 const ShellError = error{
     ExecChildFailed,
     CommandNotFound,
 };
+
+const CliError = error{
+    ReadError,
+};
+
+var foreground_pid: ?std.posix.pid_t = null;
 
 fn pipeCommand(group: *const parser.Group, command_idx: usize, fd: ?i32, allocator: std.mem.Allocator) !void {
     const cmd = group.commands.items[command_idx];
@@ -72,7 +81,7 @@ fn printShellError(err: anyerror) void {
     }
 }
 
-pub fn run(groups: []const parser.Group) !void {
+fn execute(groups: []const parser.Group) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer _ = arena.deinit();
     const allocator = arena.allocator();
@@ -91,25 +100,95 @@ pub fn run(groups: []const parser.Group) !void {
         const pid = try std.posix.fork();
 
         if (pid == 0) {
+            if (group.is_background) {
+                try std.posix.setpgid(0, 0);
+                std.debug.print("[{d}]\n", .{std.c.getpid()});
+            }
+
             pipeCommand(&group, start_idx, null, allocator) catch |err| {
                 printShellError(err);
                 std.process.exit(1);
             };
         }
 
-        const result = std.posix.waitpid(pid, 0);
-        const pipe_errored = if (std.posix.W.IFEXITED(result.status))
-            std.posix.W.EXITSTATUS(result.status) != 0
-        else
-            false;
+        if (group.is_background) {
+            _ = std.posix.waitpid(pid, std.c.W.NOHANG);
+        } else {
+            const result = std.posix.waitpid(pid, 0);
+            const pipe_errored = if (std.posix.W.IFEXITED(result.status))
+                std.posix.W.EXITSTATUS(result.status) != 0
+            else
+                false;
 
-        switch (group.logical_operator) {
-            .None, .And => {
-                if (pipe_errored) break;
-            },
-            .Or => {
-                if (!pipe_errored) break;
-            },
+            switch (group.logical_operator) {
+                .None, .And => {
+                    if (pipe_errored) break;
+                },
+                .Or => {
+                    if (!pipe_errored) break;
+                },
+            }
         }
+    }
+}
+
+fn handleBackgroundProcess(_: i32) callconv(.c) void {
+    if (foreground_pid) |_| {
+        return;
+    }
+
+    const result = std.posix.waitpid(-1, std.c.W.NOHANG);
+    if (result.pid > 0 and foreground_pid != result.pid) {
+        std.debug.print("[{d}] Done\n", .{result.pid});
+    }
+
+    if (result.pid == foreground_pid) {
+        foreground_pid = null;
+    }
+}
+
+fn readLine(buf: []u8) !?[]const u8 {
+    const stdin = std.io.getStdIn().reader();
+    const line = stdin.readUntilDelimiterOrEof(buf[0..], '\n') catch return CliError.ReadError;
+
+    return line;
+}
+
+pub fn run() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const background_process_action = std.posix.Sigaction{
+        .handler = .{ .handler = handleBackgroundProcess },
+        .mask = switch (builtin.os.tag) {
+            .macos => 0,
+            .linux => std.posix.empty_sigset,
+            else => @compileError("os not supported"),
+        },
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.CHLD, &background_process_action, null);
+
+    var buf: [ARG_MAX]u8 = undefined;
+    while (true) {
+        const cwd = try std.posix.getcwd(&buf);
+        std.debug.print("{s}> ", .{cwd});
+
+        const line = try readLine(&buf);
+
+        // EOF
+        if (line == null) std.process.exit(0);
+
+        if (line.?.len == 0) continue;
+
+        const groups = parser.parse(line.?, allocator) catch |err| {
+            std.debug.print("zkal: {any}", .{err});
+            continue;
+        };
+
+        execute(groups) catch |err| {
+            std.debug.print("zkal: {any}", .{err});
+        };
     }
 }
